@@ -1,4 +1,4 @@
-# api.py -- Replit-friendly with Google Drive model download support
+# api.py -- FastAPI with split model files from GitHub
 import os
 import io
 import json
@@ -7,18 +7,15 @@ import base64
 import urllib.request
 from typing import Optional
 
+
 # --- Base paths & environment ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploaded_files")
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 GRADCAM_OVERLAY_PATH = os.path.join(BASE_DIR, "gradcam_overlay.jpg")
 TREATMENT_GUIDE_PATH = os.path.join(BASE_DIR, "treatment_guide.json")
-# Use Replit PORT if provided, fallback to 8000
 PORT = int(os.environ.get("PORT", 8000))
 
-# Optional model download URL (set as secret in Replit). Default is the Drive view link you supplied.
-# NOTE: If you set MODEL_URL in Replit secrets, that will override the default below.
-MODEL_URL = os.environ.get("MODEL_URL", "https://drive.google.com/file/d/1M4B9BOb8IO0rvbPIOopwd2MTZ6raycZu/view?usp=drive_link")
 MODEL_PATH = os.path.join(MODEL_DIR, "best_model.h5")
 
 # create dirs if missing
@@ -37,16 +34,7 @@ except Exception as e:
     logger.exception("Required libraries missing (numpy/pillow): %s", e)
     raise
 
-# Try to import requests for more robust downloads (especially Google Drive). If not present, fall back to urllib.
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-    logger.info("requests available for downloads.")
-except Exception:
-    REQUESTS_AVAILABLE = False
-    logger.info("requests not installed; falling back to urllib for downloads.")
-
-# Import TensorFlow lazily, handle case where it's not installed
+# Import TensorFlow lazily
 try:
     import tensorflow as tf  # type: ignore
     from tensorflow.keras.models import load_model  # type: ignore
@@ -56,7 +44,7 @@ except Exception as e:
     TF_AVAILABLE = False
     logger.warning("TensorFlow not available: %s", e)
 
-# gTTS & googletrans are optional; wrap them
+# gTTS & googletrans are optional
 try:
     from gtts import gTTS
     GTTS_AVAILABLE = True
@@ -77,132 +65,68 @@ from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, HTM
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-app = FastAPI(title="Plant Disease Detector with Grad-CAM + TTS (Replit-ready)")
+app = FastAPI(title="Plant Disease Detector with Grad-CAM + TTS")
 
-# mount static files and templates (templates/static folders should exist)
+# mount static files and templates
 templates_dir = os.path.join(BASE_DIR, "templates")
 static_dir = os.path.join(BASE_DIR, "static")
 if os.path.isdir(templates_dir):
     templates = Jinja2Templates(directory=templates_dir)
 else:
-    templates = Jinja2Templates(directory=BASE_DIR)  # fallback to BASE_DIR (avoid crash)
+    templates = Jinja2Templates(directory=BASE_DIR)
 if os.path.isdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 else:
     os.makedirs(static_dir, exist_ok=True)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-# ---------- Model loading ----------
+# ---------- Model recombining and loading ----------
 model = None
 
-def _extract_drive_id(url: str) -> Optional[str]:
-    """Extract Google Drive file id from various URL forms."""
-    if not url:
-        return None
-    # common patterns:
-    # https://drive.google.com/file/d/<id>/view?...
-    # https://drive.google.com/open?id=<id>
-    # https://drive.google.com/uc?export=download&id=<id>
-    import re
-    m = re.search(r"/d/([a-zA-Z0-9_-]+)", url)
-    if m:
-        return m.group(1)
-    m = re.search(r"id=([a-zA-Z0-9_-]+)", url)
-    if m:
-        return m.group(1)
-    return None
-
-def _download_file_requests(url: str, dest_path: str):
-    """Download file via requests with streaming."""
-    with requests.Session() as s:
-        # Special handling for Google Drive large files which require confirmation
-        drive_id = _extract_drive_id(url)
-        if drive_id:
-            # initial URL for Drive direct download
-            download_url = "https://docs.google.com/uc?export=download"
-            params = {"id": drive_id}
-            logger.info("Attempting Google Drive download via requests for id=%s", drive_id)
-            r = s.get(download_url, params=params, stream=True)
-            token = None
-
-            # If it's a large file, Google returns an html page with a confirm token cookie or link
-            for k, v in r.cookies.items():
-                if k.startswith("download_warning"):
-                    token = v
-                    break
-
-            if token:
-                logger.info("Found drive confirm token in cookies; using it to download the file.")
-                params["confirm"] = token
-                r = s.get(download_url, params=params, stream=True)
-            # If there is no cookie token, requests will usually have the file content already.
-
-        else:
-            logger.info("Downloading from URL via requests: %s", url)
-            r = s.get(url, stream=True)
-
-        r.raise_for_status()
-        total = r.headers.get('Content-Length')
-        if total is not None:
-            total = int(total)
-            logger.info("Remote file size: %d bytes", total)
-
-        with open(dest_path, "wb") as fh:
-            chunk_size = 32768
-            downloaded = 0
-            for chunk in r.iter_content(chunk_size=chunk_size):
-                if chunk:
-                    fh.write(chunk)
-                    downloaded += len(chunk)
-            logger.info("Download complete: %s (%d bytes)", dest_path, downloaded)
-
-def _download_file_urllib(url: str, dest_path: str):
-    """Simple urllib download; may fail for Drive large-file confirmation pages."""
-    logger.info("Downloading via urllib: %s", url)
-    try:
-        urllib.request.urlretrieve(url, dest_path)
-        logger.info("Downloaded to %s", dest_path)
-    except Exception as e:
-        logger.exception("urllib download failed: %s", e)
-        raise
-
-def download_model_if_needed():
-    """
-    If MODEL_PATH missing and MODEL_URL provided, try to download it.
-    Handles Google Drive shared links automatically.
-    """
+def recombine_model_if_needed():
+    """Recombine split model files if they exist in the models/ folder"""
+    import glob
+    
+    # Check if model already exists
     if os.path.exists(MODEL_PATH):
         logger.info("Model already exists at %s", MODEL_PATH)
-        return
-
-    if not MODEL_URL:
-        logger.info("No MODEL_URL provided; skipping model download.")
-        return
-
-    # prefer requests-based downloader for Google Drive handling
+        return True
+    
+    # Look for split parts - handles both naming patterns
+    # Pattern 1: best_model.h5.part1, best_model.h5.part2
+    part_pattern_1 = os.path.join(MODEL_DIR, "best_model.h5.part*")
+    # Pattern 2: best_model (1).h5.part1, best_model (1).h5.part2
+    part_pattern_2 = os.path.join(MODEL_DIR, "best_model*.h5.part*")
+    
+    parts = sorted(glob.glob(part_pattern_1))
+    if not parts:
+        parts = sorted(glob.glob(part_pattern_2))
+    
+    if not parts or len(parts) < 2:
+        logger.warning("No split model parts found in %s", MODEL_DIR)
+        return False
+    
+    logger.info("Found %d model parts, recombining...", len(parts))
+    
     try:
-        drive_id = _extract_drive_id(MODEL_URL)
-        if REQUESTS_AVAILABLE:
-            _download_file_requests(MODEL_URL, MODEL_PATH)
-        else:
-            # If requests not available and it's a Google Drive link, convert to uc?export=download URL
-            if drive_id:
-                uc_url = f"https://drive.google.com/uc?export=download&id={drive_id}"
-                _download_file_urllib(uc_url, MODEL_PATH)
-            else:
-                _download_file_urllib(MODEL_URL, MODEL_PATH)
+        with open(MODEL_PATH, 'wb') as outfile:
+            for part_file in parts:
+                logger.info("  Adding %s...", os.path.basename(part_file))
+                with open(part_file, 'rb') as infile:
+                    outfile.write(infile.read())
+        
+        file_size = os.path.getsize(MODEL_PATH)
+        logger.info("Model recombined successfully: %s (%d bytes)", MODEL_PATH, file_size)
+        return True
     except Exception as e:
-        logger.exception("Model download failed: %s", e)
-        # If download failed, ensure no half file remains
-        try:
-            if os.path.exists(MODEL_PATH):
-                os.remove(MODEL_PATH)
-        except Exception:
-            pass
+        logger.exception("Failed to recombine model: %s", e)
+        return False
+
 
 if TF_AVAILABLE:
-    # try to download model (if missing) then load it
-    download_model_if_needed()
+    # Recombine split model parts if needed
+    recombine_model_if_needed()
+    
     if os.path.exists(MODEL_PATH):
         try:
             logger.info("Loading model from %s", MODEL_PATH)
@@ -221,6 +145,7 @@ if TF_AVAILABLE:
 else:
     logger.warning("TensorFlow not available; running in demo mode (no model).")
 
+
 # ---------- Helper functions ----------
 def preprocess_image_bytes(contents: bytes, target_size=(225, 225)):
     pil = Image.open(io.BytesIO(contents)).convert("RGB")
@@ -228,8 +153,10 @@ def preprocess_image_bytes(contents: bytes, target_size=(225, 225)):
     arr = np.asarray(pil).astype("float32") / 255.0
     return np.expand_dims(arr, axis=0)
 
+
 def make_dummy_gradcam_base64():
     return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////GQAH/wN/9yD6AAAAAElFTkSuQmCC"
+
 
 def safe_read_json(path: str):
     if not os.path.exists(path):
@@ -241,6 +168,7 @@ def safe_read_json(path: str):
         logger.warning("Failed to read JSON at %s: %s", path, e)
         return {}
 
+
 # ---------- Routes ----------
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -249,9 +177,11 @@ async def index(request: Request):
     except Exception:
         return HTMLResponse("<h2>Plant Disease Detector API</h2><p>Use /health, /predict, /tts, /translate</p>")
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "model_loaded": bool(model), "tf_available": TF_AVAILABLE}
+
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
@@ -312,6 +242,7 @@ async def predict(file: UploadFile = File(...)):
 
     return JSONResponse(response)
 
+
 @app.post("/tts")
 async def tts_endpoint(text: str = Form(...), lang: str = Form("en")):
     if not text:
@@ -328,6 +259,7 @@ async def tts_endpoint(text: str = Form(...), lang: str = Form("en")):
         logger.exception("TTS generation failed")
         return JSONResponse({"error": "TTS generation failed", "detail": str(e)}, status_code=500)
 
+
 @app.post("/translate")
 async def translate_endpoint(text: str = Form(...), target: str = Form("te")):
     if not text:
@@ -343,6 +275,7 @@ async def translate_endpoint(text: str = Form(...), target: str = Form("te")):
         logger.exception("Translation failed")
         return JSONResponse({"error": "Translation failed", "detail": str(e)}, status_code=500)
 
+
 @app.get("/download_uploaded_doc")
 async def download_uploaded_doc():
     doc_path = os.path.join(UPLOAD_DIR, "project_document.docx")
@@ -352,7 +285,8 @@ async def download_uploaded_doc():
                         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         filename="project_document.docx")
 
-# If run directly (useful for local dev and some Replit setups)
+
+# If run directly (useful for local dev)
 if __name__ == "__main__":
     import uvicorn
     reload_flag = os.environ.get("RELOAD", "false").lower() in ("1", "true", "yes")
