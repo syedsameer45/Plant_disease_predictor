@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+python-multipart
+tensorflow-cpu==2.20.0    # use tensorflow-cpu to avoid GPU deps on Replit
+numpy
+pillow
+jinja2
+gTTS
+googletrans==4.0.0-rc1
+matplotlib
+aiofiles
+h5py
+opencv-python-headless
+python-dotenv

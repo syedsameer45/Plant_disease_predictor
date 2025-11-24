@@ -1,0 +1,22 @@
+{
+  "Healthy": {
+    "summary": "Plant appears healthy.",
+    "steps": ["No action needed.", "Monitor regularly."]
+  },
+  "Powdery": {
+    "summary": "Powdery mildew (white powdery spots).",
+    "steps": [
+      "Remove and destroy infected leaves.",
+      "Apply sulfur or potassium bicarbonate spray as per instructions.",
+      "Improve air circulation and avoid overhead irrigation."
+    ]
+  },
+  "Rust": {
+    "summary": "Rust disease (orange/brown pustules).",
+    "steps": [
+      "Remove heavily infected leaves.",
+      "Apply recommended fungicide for rust.",
+      "Practice crop rotation and use resistant varieties."
+    ]
+  }
+}

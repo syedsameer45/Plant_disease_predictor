@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Plant Disease Detection — Advanced UI</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div>
+          <h1>Plant Disease Detection</h1>
+          <small class="tag">CNN + Grad-CAM • Explainable AI for farmers</small>
+        </div>
+      </div>
+
+      <div class="actions">
+        <a class="btn small" id="downloadDocBtn" href="/download_uploaded_doc" title="Download project doc">Download Project Doc</a>
+        <a class="btn outline small" href="/health">Server Health</a>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="card upload-card">
+        <div class="upload-left">
+          <label class="file-drop" id="fileDrop">
+            <input id="imageInput" type="file" accept="image/*">
+            <div class="drop-text">
+              <svg class="upload-ic" width="48" height="48" viewBox="0 0 24 24" fill="none"><path d="M12 3v10" stroke="#2e7d32" stroke-width="1.6" stroke-linecap="round"/><path d="M8 7l4-4 4 4" stroke="#2e7d32" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div class="muted">Drag & drop or click to choose a file</div>
+              <div class="muted small">JPEG/PNG recommended — max ~10MB</div>
+            </div>
+          </label>
+
+          <div class="uploader-controls">
+            <button id="predictBtn" class="btn primary" disabled>Analyze Image</button>
+            <div id="spinner" class="spinner hidden">Analyzing…</div>
+            <button id="clearHistoryBtn" class="btn outline">Clear History</button>
+          </div>
+        </div>
+
+        <div class="upload-right">
+          <div class="preview">
+            <img id="previewImg" src="/static/images/placeholder.jpg" alt="preview" />
+          </div>
+          <div class="meta">
+            <div><strong>Filename:</strong> <span id="fileName">No file selected</span></div>
+            <div><strong>Size:</strong> <span id="fileSize">—</span></div>
+            <div><strong>Resolution:</strong> <span id="fileRes">—</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="resultCard" class="card result-card hidden">
+        <div class="result-main">
+          <div class="result-info">
+            <h2 id="diseaseTitle">Rust</h2>
+            <div class="confidence">Confidence: <span id="confidence">0.998</span></div>
+            <div class="treatment">
+              <h4>Treatment Guide</h4>
+              <p id="treatmentSummary"></p>
+              <ul id="treatmentSteps"></ul>
+            </div>
+
+            <div class="result-actions">
+              <a id="downloadOverlay" class="btn">Download Heatmap</a>
+              <button id="saveToHistoryBtn" class="btn outline">Save to History</button>
+
+              <!-- TTS controls -->
+              <button id="speakBtn" class="btn" title="Listen to result">🔊 Listen</button>
+
+              <select id="voiceSelect" class="small" title="Voice/language" style="margin-left:8px;">
+                <option value="en">English (default)</option>
+                <option value="en-IN">English (India)</option>
+                <option value="hi">Hindi</option>
+                <option value="te">Telugu</option>
+              </select>
+
+              <!-- Voice toggle: ON/OFF -->
+              <label style="margin-left:12px; display:inline-flex; align-items:center; gap:8px;">
+                <input type="checkbox" id="voiceToggle" />
+                <small class="muted">Voice ON</small>
+              </label>
+            </div>
+          </div>
+
+          <div class="result-visual">
+            <div class="heatmap-wrap">
+              <img id="heatmapImg" src="/static/images/placeholder.jpg" alt="gradcam" />
+            </div>
+          </div>
+        </div>
+
+        <div class="result-extra">
+          <div class="small muted">Model: <code>best_model.h5</code> • Last Conv: <span id="lastConv"></span></div>
+          <div class="small muted">Uploaded doc path (server): <code id="uploadedDocPath"></code></div>
+        </div>
+      </section>
+
+      <section class="card history-card">
+        <h3>Recent Analyses</h3>
+        <div id="historyList" class="history-list"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div>Made with ❤️ — Plant Disease Detector</div>
+      <div class="muted small">Tip: use clear close-up photos of leaf surface for best results.</div>
+    </footer>
+  </div>
+
+  <script>
+    // local path to uploaded doc (server-side file)
+    const UPLOADED_DOC_LOCAL_PATH = "/mnt/data/b1f2a156-0bbc-4886-8c7f-30f0a00062aa.docx";
+    document.addEventListener('DOMContentLoaded', () => {
+      const el = document.getElementById('uploadedDocPath');
+      if (el) el.textContent = UPLOADED_DOC_LOCAL_PATH;
+    });
+  </script>
+
+  <script src="/static/js/script.js"></script>
+</body>
+</html>
