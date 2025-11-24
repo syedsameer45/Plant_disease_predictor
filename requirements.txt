@@ -12,3 +12,4 @@ aiofiles
 h5py
 opencv-python-headless
 python-dotenv
+requests
