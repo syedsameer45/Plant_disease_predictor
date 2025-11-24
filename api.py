@@ -1,4 +1,4 @@
-# api.py -- fixed for deployment (Replit-friendly)
+# api.py -- Replit-friendly with Google Drive model download support
 import os
 import io
 import json
@@ -15,8 +15,10 @@ GRADCAM_OVERLAY_PATH = os.path.join(BASE_DIR, "gradcam_overlay.jpg")
 TREATMENT_GUIDE_PATH = os.path.join(BASE_DIR, "treatment_guide.json")
 # Use Replit PORT if provided, fallback to 8000
 PORT = int(os.environ.get("PORT", 8000))
-# Optional model download URL (set as secret if using Replit secrets)
-MODEL_URL = os.environ.get("MODEL_URL", "")
+
+# Optional model download URL (set as secret in Replit). Default is the Drive view link you supplied.
+# NOTE: If you set MODEL_URL in Replit secrets, that will override the default below.
+MODEL_URL = os.environ.get("MODEL_URL", "https://drive.google.com/file/d/1M4B9BOb8IO0rvbPIOopwd2MTZ6raycZu/view?usp=drive_link")
 MODEL_PATH = os.path.join(MODEL_DIR, "best_model.h5")
 
 # create dirs if missing
@@ -29,25 +31,30 @@ logger = logging.getLogger("api")
 
 # --- Try imports that may be heavy or optional ---
 try:
-    # Prefer CPU-only TF if available in environment to reduce GPU dependency problems
     import numpy as np
     from PIL import Image
-    # Import tensorflow lazily below to catch import errors and keep app alive if not installed
+except Exception as e:
+    logger.exception("Required libraries missing (numpy/pillow): %s", e)
+    raise
+
+# Try to import requests for more robust downloads (especially Google Drive). If not present, fall back to urllib.
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+    logger.info("requests available for downloads.")
+except Exception:
+    REQUESTS_AVAILABLE = False
+    logger.info("requests not installed; falling back to urllib for downloads.")
+
+# Import TensorFlow lazily, handle case where it's not installed
+try:
     import tensorflow as tf  # type: ignore
     from tensorflow.keras.models import load_model  # type: ignore
     TF_AVAILABLE = True
     logger.info("TensorFlow import succeeded.")
 except Exception as e:
-    # If TensorFlow isn't installed or fails to import, continue without crash.
     TF_AVAILABLE = False
     logger.warning("TensorFlow not available: %s", e)
-    # still import numpy and PIL if possible; if they fail it'll raise here
-    try:
-        import numpy as np
-        from PIL import Image
-    except Exception as e2:
-        logger.error("Required libs missing: %s", e2)
-        raise
 
 # gTTS & googletrans are optional; wrap them
 try:
@@ -82,44 +89,129 @@ else:
 if os.path.isdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 else:
-    # create static dir to avoid mount errors
     os.makedirs(static_dir, exist_ok=True)
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # ---------- Model loading ----------
 model = None
 
+def _extract_drive_id(url: str) -> Optional[str]:
+    """Extract Google Drive file id from various URL forms."""
+    if not url:
+        return None
+    # common patterns:
+    # https://drive.google.com/file/d/<id>/view?...
+    # https://drive.google.com/open?id=<id>
+    # https://drive.google.com/uc?export=download&id=<id>
+    import re
+    m = re.search(r"/d/([a-zA-Z0-9_-]+)", url)
+    if m:
+        return m.group(1)
+    m = re.search(r"id=([a-zA-Z0-9_-]+)", url)
+    if m:
+        return m.group(1)
+    return None
+
+def _download_file_requests(url: str, dest_path: str):
+    """Download file via requests with streaming."""
+    with requests.Session() as s:
+        # Special handling for Google Drive large files which require confirmation
+        drive_id = _extract_drive_id(url)
+        if drive_id:
+            # initial URL for Drive direct download
+            download_url = "https://docs.google.com/uc?export=download"
+            params = {"id": drive_id}
+            logger.info("Attempting Google Drive download via requests for id=%s", drive_id)
+            r = s.get(download_url, params=params, stream=True)
+            token = None
+
+            # If it's a large file, Google returns an html page with a confirm token cookie or link
+            for k, v in r.cookies.items():
+                if k.startswith("download_warning"):
+                    token = v
+                    break
+
+            if token:
+                logger.info("Found drive confirm token in cookies; using it to download the file.")
+                params["confirm"] = token
+                r = s.get(download_url, params=params, stream=True)
+            # If there is no cookie token, requests will usually have the file content already.
+
+        else:
+            logger.info("Downloading from URL via requests: %s", url)
+            r = s.get(url, stream=True)
+
+        r.raise_for_status()
+        total = r.headers.get('Content-Length')
+        if total is not None:
+            total = int(total)
+            logger.info("Remote file size: %d bytes", total)
+
+        with open(dest_path, "wb") as fh:
+            chunk_size = 32768
+            downloaded = 0
+            for chunk in r.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+            logger.info("Download complete: %s (%d bytes)", dest_path, downloaded)
+
+def _download_file_urllib(url: str, dest_path: str):
+    """Simple urllib download; may fail for Drive large-file confirmation pages."""
+    logger.info("Downloading via urllib: %s", url)
+    try:
+        urllib.request.urlretrieve(url, dest_path)
+        logger.info("Downloaded to %s", dest_path)
+    except Exception as e:
+        logger.exception("urllib download failed: %s", e)
+        raise
+
 def download_model_if_needed():
     """
-    If MODEL_PATH missing and MODEL_URL provided, try to download it using urllib.
-    Use MODEL_URL env var (set via Replit secrets). This avoids requiring requests in requirements.
+    If MODEL_PATH missing and MODEL_URL provided, try to download it.
+    Handles Google Drive shared links automatically.
     """
     if os.path.exists(MODEL_PATH):
         logger.info("Model already exists at %s", MODEL_PATH)
         return
+
     if not MODEL_URL:
         logger.info("No MODEL_URL provided; skipping model download.")
         return
+
+    # prefer requests-based downloader for Google Drive handling
     try:
-        logger.info("Downloading model from %s ...", MODEL_URL)
-        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-        logger.info("Model downloaded to %s", MODEL_PATH)
+        drive_id = _extract_drive_id(MODEL_URL)
+        if REQUESTS_AVAILABLE:
+            _download_file_requests(MODEL_URL, MODEL_PATH)
+        else:
+            # If requests not available and it's a Google Drive link, convert to uc?export=download URL
+            if drive_id:
+                uc_url = f"https://drive.google.com/uc?export=download&id={drive_id}"
+                _download_file_urllib(uc_url, MODEL_PATH)
+            else:
+                _download_file_urllib(MODEL_URL, MODEL_PATH)
     except Exception as e:
         logger.exception("Model download failed: %s", e)
+        # If download failed, ensure no half file remains
+        try:
+            if os.path.exists(MODEL_PATH):
+                os.remove(MODEL_PATH)
+        except Exception:
+            pass
 
 if TF_AVAILABLE:
-    # optionally download model from MODEL_URL if provided
+    # try to download model (if missing) then load it
     download_model_if_needed()
     if os.path.exists(MODEL_PATH):
         try:
             logger.info("Loading model from %s", MODEL_PATH)
+            # load_model can be heavy; catch exceptions and continue in demo mode if fails
             model = load_model(MODEL_PATH)
-            # attempt a dummy call to build the model (safe-guard)
             try:
                 model(np.zeros((1, 225, 225, 3), dtype=np.float32))
                 logger.info("Model loaded and warmed up.")
             except Exception:
-                # not fatal; model will build on first predict
                 logger.info("Model loaded (build deferred).")
         except Exception as e:
             logger.exception("Failed to load model: %s", e)
@@ -131,19 +223,12 @@ else:
 
 # ---------- Helper functions ----------
 def preprocess_image_bytes(contents: bytes, target_size=(225, 225)):
-    """
-    Read raw image bytes -> PIL -> resized numpy array (1,H,W,3) scaled 0..1
-    """
     pil = Image.open(io.BytesIO(contents)).convert("RGB")
     pil = pil.resize(target_size)
     arr = np.asarray(pil).astype("float32") / 255.0
     return np.expand_dims(arr, axis=0)
 
 def make_dummy_gradcam_base64():
-    """
-    Return a tiny embedded PNG/JPG base64 as placeholder.
-    """
-    # 1x1 transparent PNG base64 (data only)
     return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////GQAH/wN/9yD6AAAAAElFTkSuQmCC"
 
 def safe_read_json(path: str):
@@ -162,7 +247,6 @@ async def index(request: Request):
     try:
         return templates.TemplateResponse("index.html", {"request": request})
     except Exception:
-        # Fall back to small HTML if templates missing
         return HTMLResponse("<h2>Plant Disease Detector API</h2><p>Use /health, /predict, /tts, /translate</p>")
 
 @app.get("/health")
@@ -171,14 +255,6 @@ async def health():
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    """
-    Predict endpoint:
-      - accepts an uploaded image file
-      - if model present: runs prediction and returns disease/confidence
-      - returns gradcam_base64 (placeholder if real Grad-CAM not implemented)
-      - returns treatment from treatment_guide.json if present
-    """
-    # Validate content type if needed (optional)
     try:
         contents = await file.read()
         if not contents:
@@ -201,14 +277,12 @@ async def predict(file: UploadFile = File(...)):
             preds = model.predict(arr)
             idx = int(np.argmax(preds[0]))
             conf = float(np.max(preds[0]))
-            # adjust label_map to your model's mapping
             label_map = {0: "Healthy", 1: "Powdery", 2: "Rust"}
             label = label_map.get(idx, "Unknown")
             response["disease"] = label
             response["confidence"] = f"{conf:.6f}"
-            response["last_conv"] = "conv2d_*"  # placeholder; set to actual last conv layer name if you compute Grad-CAM
+            response["last_conv"] = "conv2d_*"
 
-            # if an overlay image exists, return it (base64)
             if os.path.exists(GRADCAM_OVERLAY_PATH):
                 try:
                     with open(GRADCAM_OVERLAY_PATH, "rb") as f:
@@ -218,7 +292,6 @@ async def predict(file: UploadFile = File(...)):
             else:
                 response["gradcam_base64"] = make_dummy_gradcam_base64()
 
-            # load treatment guide if exists
             guides = safe_read_json(TREATMENT_GUIDE_PATH)
             if guides:
                 guide = guides.get(label)
@@ -228,10 +301,8 @@ async def predict(file: UploadFile = File(...)):
             logger.exception("Prediction failed")
             return JSONResponse({"error": "Prediction failed", "detail": str(e)}, status_code=500)
     else:
-        # model not loaded: demo response
         response["disease"] = "Demo (model not loaded)"
         response["confidence"] = "0.0"
-        # return overlay if present
         if os.path.exists(GRADCAM_OVERLAY_PATH):
             try:
                 with open(GRADCAM_OVERLAY_PATH, "rb") as f:
@@ -243,9 +314,6 @@ async def predict(file: UploadFile = File(...)):
 
 @app.post("/tts")
 async def tts_endpoint(text: str = Form(...), lang: str = Form("en")):
-    """
-    Convert `text` -> mp3 using gTTS and return streaming response.
-    """
     if not text:
         return JSONResponse({"error": "No text provided"}, status_code=400)
     if not GTTS_AVAILABLE:
@@ -262,9 +330,6 @@ async def tts_endpoint(text: str = Form(...), lang: str = Form("en")):
 
 @app.post("/translate")
 async def translate_endpoint(text: str = Form(...), target: str = Form("te")):
-    """
-    Translate input text -> target language using googletrans.
-    """
     if not text:
         return JSONResponse({"error": "No text provided"}, status_code=400)
     if not GOOGLETRANS_AVAILABLE:
@@ -280,10 +345,6 @@ async def translate_endpoint(text: str = Form(...), target: str = Form("te")):
 
 @app.get("/download_uploaded_doc")
 async def download_uploaded_doc():
-    """
-    Serves a server-side docx file located in UPLOAD_DIR.
-    Adjust file path or add authentication in production.
-    """
     doc_path = os.path.join(UPLOAD_DIR, "project_document.docx")
     if not os.path.exists(doc_path):
         return JSONResponse({"error": "Uploaded doc not found"}, status_code=404)
@@ -294,6 +355,5 @@ async def download_uploaded_doc():
 # If run directly (useful for local dev and some Replit setups)
 if __name__ == "__main__":
     import uvicorn
-    # If you want auto-reload in development, set environment variable RELOAD=true
     reload_flag = os.environ.get("RELOAD", "false").lower() in ("1", "true", "yes")
     uvicorn.run("api:app", host="0.0.0.0", port=PORT, reload=reload_flag)
