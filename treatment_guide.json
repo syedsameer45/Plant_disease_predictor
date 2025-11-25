@@ -1,22 +1,139 @@
 {
-  "Healthy": {
-    "summary": "Plant appears healthy.",
-    "steps": ["No action needed.", "Monitor regularly."]
-  },
-  "Powdery": {
-    "summary": "Powdery mildew (white powdery spots).",
-    "steps": [
-      "Remove and destroy infected leaves.",
-      "Apply sulfur or potassium bicarbonate spray as per instructions.",
-      "Improve air circulation and avoid overhead irrigation."
-    ]
-  },
   "Rust": {
-    "summary": "Rust disease (orange/brown pustules).",
-    "steps": [
-      "Remove heavily infected leaves.",
-      "Apply recommended fungicide for rust.",
-      "Practice crop rotation and use resistant varieties."
-    ]
+    "te": {
+      "treatment_summary": "రస్ట్ రోగాన్ని నియంత్రించడానికి, సోకిన ఆకులను తొలగించి, సరైన ఫంగిసైడ్లను ఉపయోగించండి. మంచి గాలి ప్రసరణ మరియు నీటి నిర్వహణ అవసరం.",
+      "step_by_step": [
+        "సోకిన ఆకులు మరియు కాండాలను తొలగించి నాశనం చేయండి",
+        "మాన్కోజెబ్ (2గ్రా/లీటర్) లేదా హెక్సాకోనాజోల్ (1మిలీ/లీటర్) స్ప్రే చేయండి",
+        "7-10 రోజుల Intervals లో 2-3 సార్లు పునరావృతం చేయండి",
+        "మొక్కల మధ్య సరైన దూరం పాటించండి మరియు మంచి గాలి ప్రసరణ ఉండేలా చూడండి"
+      ],
+      "pesticides": [
+        { "name": "Mancozeb", "dosage": "2 grams per liter of water", "frequency": "7-10 రోజుల Intervals లో", "notes": "ఉదయం లేదా సాయంత్రం స్ప్రే చేయండి" },
+        { "name": "Hexaconazole", "dosage": "1 ml per liter of water", "frequency": "10-14 రోజుల Intervals లో", "notes": "రక్షిత చేతి తొడుగులు మరియు ముసుగు ధరించండి" },
+        { "name": "Tridemorph", "dosage": "1.5 ml per liter of water", "frequency": "14 రోజుల Intervals లో", "notes": "తడి కాలం లో తప్పించండి" }
+      ],
+      "precautions": "స్ప్రే చేసేటప్పుడు రక్షిత చేతి తొడుగులు, ముసుగు మరియు కళ్ళ కవచం ధరించండి. నీటి మూలాలకు దూరంగా స్ప్రే చేయండి."
+    },
+    "en": {
+      "treatment_summary": "To control Rust disease, remove infected leaves and use appropriate fungicides. Good air circulation and water management are essential.",
+      "step_by_step": [
+        "Remove and destroy infected leaves and stems",
+        "Spray Mancozeb (2g/liter) or Hexaconazole (1ml/liter)",
+        "Repeat 2-3 times at 7-10 day intervals",
+        "Maintain proper plant spacing and ensure good air circulation"
+      ],
+      "pesticides": [
+        { "name": "Mancozeb", "dosage": "2 grams per liter of water", "frequency": "Every 7-10 days", "notes": "Spray in morning or evening" },
+        { "name": "Hexaconazole", "dosage": "1 ml per liter of water", "frequency": "Every 10-14 days", "notes": "Wear protective gloves and mask" },
+        { "name": "Tridemorph", "dosage": "1.5 ml per liter of water", "frequency": "Every 14 days", "notes": "Avoid during rainy period" }
+      ],
+      "precautions": "Wear protective gloves, mask and goggles while spraying. Spray away from water sources."
+    },
+    "hi": {
+      "treatment_summary": "रस्ट रोग को नियंत्रित करने के लिए, संक्रमित पत्तियों को हटाएं और उचित फफूंदनाशकों का उपयोग करें। अच्छे वायु संचार और जल प्रबंधन आवश्यक हैं।",
+      "step_by_step": [
+        "संक्रमित पत्तियों और तनों को हटाकर नष्ट करें",
+        "मैंकोजेब (2ग्रा/लीटर) या हेक्साकोनाज़ोल (1मिली/लीटर) का छिड़काव करें",
+        "7-10 दिनों के अंतराल पर 2-3 बार दोहराएं",
+        "उचित पौधे की दूरी बनाए रखें और अच्छे वायु संचार सुनिश्चित करें"
+      ],
+      "pesticides": [
+        { "name": "Mancozeb", "dosage": "2 ग्राम प्रति लीटर पानी", "frequency": "हर 7-10 दिन", "notes": "सुबह या शाम छिड़काव करें" },
+        { "name": "Hexaconazole", "dosage": "1 मिली प्रति लीटर पानी", "frequency": "हर 10-14 दिन", "notes": "सुरक्षात्मक दस्ताने और मास्क पहनें" },
+        { "name": "Tridemorph", "dosage": "1.5 मिली प्रति लीटर पानी", "frequency": "हर 14 दिन", "notes": "बरसात के दौरान टालें" }
+      ],
+      "precautions": "छिड़काव करते समय सुरक्षात्मक दस्ताने, मास्क और गोगल्स पहनें। पानी के स्रोतों से दूर छिड़काव करें।"
+    }
+  },
+
+  "Powdery": {
+    "te": {
+      "treatment_summary": "పౌడరీ మిల్డ్యూ రోగానికి సల్ఫర్ ఆధారిత ఫంగిసైడ్లు ప్రభావవంతంగా పనిచేస్తాయి. మంచి గాలి ప్రసరణ మరియు తక్కువ తేమ నియంత్రించడంలో సహాయపడతాయి.",
+      "step_by_step": [
+        "తక్కువ సోకిన ఆకులను తొలగించండి",
+        "వెటబుల్ సల్ఫర్ (3గ్రా/లీటర్) లేదా నీం ఆయిల్ (5మిలీ/లీటర్) స్ప్రే చేయండి",
+        "5-7 రోజుల Intervals లో చికిత్స పునరావృతం చేయండి",
+        "గాలి ప్రసరణ మెరుగుపడేలా మొక్కలను ప్రునింగ్ చేయండి"
+      ],
+      "pesticides": [
+        { "name": "Wettable Sulfur", "dosage": "3 grams per liter of water", "frequency": "5-7 రోజుల Intervals లో", "notes": "Avoid in hot weather above 35°C" },
+        { "name": "Neem Oil", "dosage": "5 ml per liter of water", "frequency": "Twice a week", "notes": "Spray in evening" },
+        { "name": "Carbendazim", "dosage": "1 gram per liter of water", "frequency": "Every 10 days", "notes": "Use as alternative" }
+      ],
+      "precautions": "సల్ఫర్ స్ప్రే చేసేటప్పుడు 35°C కంటే ఎక్కువ ఉష్ణోగ్రతల్లో తప్పించండి. రక్షిత ఉపకరణాలు ధరించండి."
+    },
+    "en": {
+      "treatment_summary": "Sulfur-based fungicides are effective against Powdery Mildew. Good air circulation and low humidity help in control.",
+      "step_by_step": [
+        "Remove lightly infected leaves",
+        "Spray Wettable Sulfur (3g/liter) or Neem Oil (5ml/liter)",
+        "Repeat treatment at 5-7 day intervals",
+        "Prune plants to improve air circulation"
+      ],
+      "pesticides": [
+        { "name": "Wettable Sulfur", "dosage": "3 grams per liter of water", "frequency": "Every 5-7 days", "notes": "Avoid in hot weather above 35°C" },
+        { "name": "Neem Oil", "dosage": "5 ml per liter of water", "frequency": "Twice a week", "notes": "Spray in evening" },
+        { "name": "Carbendazim", "dosage": "1 gram per liter of water", "frequency": "Every 10 days", "notes": "Use as alternative" }
+      ],
+      "precautions": "Avoid sulfur spray in temperatures above 35°C. Wear protective equipment."
+    },
+    "hi": {
+      "treatment_summary": "पाउडरी मिल्ड्यू के खिलाफ सल्फर-आधारित फफूंदनाशक प्रभावी हैं। अच्छे वायु संचार और कम आर्द्रता नियंत्रण में मदद करते हैं।",
+      "step_by_step": [
+        "हल्के संक्रमित पत्तियों को हटाएं",
+        "वेटेबल सल्फर (3ग्रा/लीटर) या नीम ऑयल (5मिली/लीटर) का छिड़काव करें",
+        "5-7 दिनों के अंतराल पर उपचार दोहराएं",
+        "वायु संचार में सुधार के लिए पौधों की छंटाई करें"
+      ],
+      "pesticides": [
+        { "name": "Wettable Sulfur", "dosage": "3 ग्राम प्रति लीटर पानी", "frequency": "हर 5-7 दिन", "notes": "35°C से अधिक गर्म मौसम में टालें" },
+        { "name": "Neem Oil", "dosage": "5 मिली प्रति लीटर पानी", "frequency": "सप्ताह में दो बार", "notes": "शाम को छिड़काव करें" },
+        { "name": "Carbendazim", "dosage": "1 ग्राम प्रति लीटर पानी", "frequency": "हर 10 दिन", "notes": "विकल्प के रूप में उपयोग करें" }
+      ],
+      "precautions": "35°C से अधिक तापमान में सल्फर छिड़काव से बचें। सुरक्षात्मक उपकरण पहनें।"
+    }
+  },
+
+  "Healthy": {
+    "te": {
+      "treatment_summary": "మీ మొక్కలు ఆరోగ్యంగా ఉన్నాయి! నిర్వహణ చర్యలు: క్రమం తప్పకుండా పరిశీలించండి, సరైన నీటి పరిమాణం ఇవ్వండి, మరియు సమతుల్య ఎరువులు వాడండి.",
+      "step_by_step": [
+        "వారానికి ఒకసారి మొక్కలను పరిశీలించండి",
+        "సరైన నీటి పరిమాణం ఇవ్వండి - అధికంగా కాదు",
+        "సమతుల్య NPK ఎరువులు వాడండి (19:19:19)",
+        "కీటకాలను క్రమం తప్పకుండా పరిశీలించండి"
+      ],
+      "pesticides": [
+        { "name": "Preventive Neem Spray", "dosage": "5 ml per liter of water", "frequency": "Twice a month", "notes": "For protection from pests and diseases" }
+      ],
+      "precautions": "ఆరోగ్యకరమైన మొక్కలను కొనసాగించడానికి క్రమం తప్పకుండా పరిశీలించండి మరియు నిర్వహించండి."
+    },
+    "en": {
+      "treatment_summary": "Your plants are healthy! Maintenance practices: Regular inspection, proper watering, and balanced fertilizers.",
+      "step_by_step": [
+        "Inspect plants weekly for any issues",
+        "Provide adequate water - avoid overwatering",
+        "Use balanced NPK fertilizers (19:19:19)",
+        "Monitor regularly for pests"
+      ],
+      "pesticides": [
+        { "name": "Preventive Neem Spray", "dosage": "5 ml per liter of water", "frequency": "Twice a month", "notes": "For protection from pests and diseases" }
+      ],
+      "precautions": "Regularly inspect and maintain to keep plants healthy."
+    },
+    "hi": {
+      "treatment_summary": "आपके पौधे स्वस्थ हैं! रखरखाव प्रथाएं: नियमित निरीक्षण, उचित पानी देना, और संतुलित उर्वरक।",
+      "step_by_step": [
+        "किसी भी समस्या के लिए साप्ताहिक पौधों का निरीक्षण करें",
+        "पर्याप्त पानी दें - अधिक पानी देने से बचें",
+        "संतुलित NPK उर्वरक (19:19:19) का उपयोग करें",
+        "कीटों के लिए नियमित रूप से निगरानी करें"
+      ],
+      "pesticides": [
+        { "name": "Preventive Neem Spray", "dosage": "5 मिली प्रति लीटर पानी", "frequency": "महीने में दो बार", "notes": "कीटों और रोगों से सुरक्षा के लिए" }
+      ],
+      "precautions": "पौधों को स्वस्थ रखने के लिए नियमित रूप से निरीक्षण और रखरखाव करें।"
+    }
   }
 }
