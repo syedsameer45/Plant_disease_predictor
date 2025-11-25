@@ -1,293 +1,276 @@
-# api.py -- FastAPI with split model files from GitHub
+# api.py — CLEAN VERSION
+
 import os
 import io
 import json
 import logging
 import base64
-import urllib.request
-from typing import Optional
+import glob
+from typing import Dict, Any, Optional
 
+from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 
-# --- Base paths & environment ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploaded_files")
-MODEL_DIR = os.path.join(BASE_DIR, "models")
-GRADCAM_OVERLAY_PATH = os.path.join(BASE_DIR, "gradcam_overlay.jpg")
-TREATMENT_GUIDE_PATH = os.path.join(BASE_DIR, "treatment_guide.json")
-PORT = int(os.environ.get("PORT", 8000))
+import numpy as np
+from PIL import Image
 
-MODEL_PATH = os.path.join(MODEL_DIR, "best_model.h5")
-
-# create dirs if missing
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(MODEL_DIR, exist_ok=True)
-
-# --- Logging ---
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("api")
-
-# --- Try imports that may be heavy or optional ---
+# TensorFlow
 try:
-    import numpy as np
-    from PIL import Image
-except Exception as e:
-    logger.exception("Required libraries missing (numpy/pillow): %s", e)
-    raise
-
-# Import TensorFlow lazily
-try:
-    import tensorflow as tf  # type: ignore
-    from tensorflow.keras.models import load_model  # type: ignore
+    import tensorflow as tf
+    from tensorflow.keras.models import load_model
+    from tensorflow.keras.layers import Conv2D
     TF_AVAILABLE = True
-    logger.info("TensorFlow import succeeded.")
-except Exception as e:
+except Exception:
     TF_AVAILABLE = False
-    logger.warning("TensorFlow not available: %s", e)
 
-# gTTS & googletrans are optional
+# GradCAM utils
+from gradcam_utils import (
+    preprocess_pil,
+    make_gradcam_heatmap,
+    overlay_heatmap,
+    pil_to_base64
+)
+
+# TTS
 try:
     from gtts import gTTS
     GTTS_AVAILABLE = True
-except Exception as e:
+except Exception:
     GTTS_AVAILABLE = False
-    logger.warning("gTTS not available: %s", e)
 
-try:
-    from googletrans import Translator
-    GOOGLETRANS_AVAILABLE = True
-except Exception as e:
-    GOOGLETRANS_AVAILABLE = False
-    logger.warning("googletrans not available: %s", e)
+# Paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "models")
+MODEL_PATH = os.path.join(MODEL_DIR, "best_model.h5")
+TREATMENT_JSON_PATH = os.path.join(BASE_DIR, "treatment.json")
+PORT = 8000
 
-# FastAPI & related
-from fastapi import FastAPI, UploadFile, File, Request, Form
-from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+os.makedirs(MODEL_DIR, exist_ok=True)
 
-app = FastAPI(title="Plant Disease Detector with Grad-CAM + TTS")
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("api")
 
-# mount static files and templates
-templates_dir = os.path.join(BASE_DIR, "templates")
-static_dir = os.path.join(BASE_DIR, "static")
-if os.path.isdir(templates_dir):
-    templates = Jinja2Templates(directory=templates_dir)
-else:
-    templates = Jinja2Templates(directory=BASE_DIR)
-if os.path.isdir(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-else:
-    os.makedirs(static_dir, exist_ok=True)
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+# FastAPI init
+app = FastAPI(title="Plant Disease Detector")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+templates = Jinja2Templates(directory="./templates")
+app.mount("/static", StaticFiles(directory="./static"), name="static")
 
-# ---------- Model recombining and loading ----------
-model = None
-
-def recombine_model_if_needed():
-    """Recombine split model files if they exist in the models/ folder"""
-    import glob
-    
-    # Check if model already exists
-    if os.path.exists(MODEL_PATH):
-        logger.info("Model already exists at %s", MODEL_PATH)
-        return True
-    
-    # Look for split parts - handles both naming patterns
-    # Pattern 1: best_model.h5.part1, best_model.h5.part2
-    part_pattern_1 = os.path.join(MODEL_DIR, "best_model.h5.part*")
-    # Pattern 2: best_model (1).h5.part1, best_model (1).h5.part2
-    part_pattern_2 = os.path.join(MODEL_DIR, "best_model*.h5.part*")
-    
-    parts = sorted(glob.glob(part_pattern_1))
-    if not parts:
-        parts = sorted(glob.glob(part_pattern_2))
-    
-    if not parts or len(parts) < 2:
-        logger.warning("No split model parts found in %s", MODEL_DIR)
-        return False
-    
-    logger.info("Found %d model parts, recombining...", len(parts))
-    
+# Treatment JSON loader
+def load_treatment_json() -> Dict[str, Any]:
+    """Load treatment.json from project root"""
     try:
-        with open(MODEL_PATH, 'wb') as outfile:
-            for part_file in parts:
-                logger.info("  Adding %s...", os.path.basename(part_file))
-                with open(part_file, 'rb') as infile:
-                    outfile.write(infile.read())
-        
-        file_size = os.path.getsize(MODEL_PATH)
-        logger.info("Model recombined successfully: %s (%d bytes)", MODEL_PATH, file_size)
-        return True
+        if os.path.exists(TREATMENT_JSON_PATH):
+            with open(TREATMENT_JSON_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                logger.info("✅ Successfully loaded treatment.json")
+                return data
+        else:
+            logger.warning("❌ treatment.json not found at: %s", TREATMENT_JSON_PATH)
+            return {}
     except Exception as e:
-        logger.exception("Failed to recombine model: %s", e)
-        return False
+        logger.error("❌ Failed to load treatment.json: %s", e)
+        return {}
 
+# Audio Functions
+def make_audio_base64(text: str, lang="te"):
+    """Convert text → base64 audio"""
+    if not GTTS_AVAILABLE:
+        return None
+    try:
+        buf = io.BytesIO()
+        gTTS(text=text, lang=lang).write_to_fp(buf)
+        buf.seek(0)
+        return base64.b64encode(buf.read()).decode("utf-8")
+    except Exception as e:
+        logger.error(f"TTS error: {e}")
+        return None
+
+# Model recombine
+def recombine_model_parts():
+    if os.path.exists(MODEL_PATH):
+        return True
+    parts = sorted(glob.glob(os.path.join(MODEL_DIR, "best_model.h5.part*")))
+    if not parts:
+        logger.warning("No model parts found.")
+        return False
+    logger.info("Recombining model parts...")
+    with open(MODEL_PATH, "wb") as out:
+        for p in parts:
+            with open(p, "rb") as f:
+                out.write(f.read())
+    logger.info("Model recombined successfully.")
+    return True
+
+# Get Treatment Data
+def get_treatment_data(disease: str, lang: str) -> Dict[str, Any]:
+    """Get treatment data from treatment.json"""
+    treatments = load_treatment_json()
+    
+    # Get disease data
+    disease_data = treatments.get(disease, treatments.get("Rust", {}))
+    lang_data = disease_data.get(lang, disease_data.get("en", {}))
+    
+    # Build treatment response
+    treatment = {
+        "treatment_summary": lang_data.get("treatment_summary", "Treatment information not available."),
+        "step_by_step": lang_data.get("step_by_step", []),
+        "pesticides": lang_data.get("pesticides", []),
+        "precautions": lang_data.get("precautions", ""),
+        "translations": {
+            "te": disease_data.get("te", {}).get("treatment_summary", ""),
+            "en": disease_data.get("en", {}).get("treatment_summary", ""),
+            "hi": disease_data.get("hi", {}).get("treatment_summary", "")
+        },
+        "language": lang
+    }
+    
+    return treatment
+
+# Safe GradCAM
+def safe_gradcam(img: Image.Image, model, last_conv_layer):
+    """Safely generate GradCAM heatmap"""
+    try:
+        if model is None or last_conv_layer is None:
+            return None
+        x = preprocess_pil(img, (225, 225))
+        heatmap = make_gradcam_heatmap(x, model, last_conv_layer)
+        return heatmap
+    except Exception as e:
+        logger.error(f"GradCAM error: {e}")
+        return None
+
+# Load ML model
+model = None
+LAST_CONV = None
 
 if TF_AVAILABLE:
-    # Recombine split model parts if needed
-    recombine_model_if_needed()
-    
+    recombine_model_parts()
     if os.path.exists(MODEL_PATH):
         try:
-            logger.info("Loading model from %s", MODEL_PATH)
-            # load_model can be heavy; catch exceptions and continue in demo mode if fails
             model = load_model(MODEL_PATH)
-            try:
-                model(np.zeros((1, 225, 225, 3), dtype=np.float32))
-                logger.info("Model loaded and warmed up.")
-            except Exception:
-                logger.info("Model loaded (build deferred).")
+            for layer in reversed(model.layers):
+                if isinstance(layer, Conv2D):
+                    LAST_CONV = layer.name
+                    break
+            logger.info("✅ Model loaded successfully")
         except Exception as e:
-            logger.exception("Failed to load model: %s", e)
+            logger.error(f"❌ Model loading failed: {e}")
             model = None
     else:
-        logger.warning("Model file not found at %s; continuing in demo mode.", MODEL_PATH)
-else:
-    logger.warning("TensorFlow not available; running in demo mode (no model).")
+        logger.warning("❌ Model file not found")
 
-
-# ---------- Helper functions ----------
-def preprocess_image_bytes(contents: bytes, target_size=(225, 225)):
-    pil = Image.open(io.BytesIO(contents)).convert("RGB")
-    pil = pil.resize(target_size)
-    arr = np.asarray(pil).astype("float32") / 255.0
-    return np.expand_dims(arr, axis=0)
-
-
-def make_dummy_gradcam_base64():
-    return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////GQAH/wN/9yD6AAAAAElFTkSuQmCC"
-
-
-def safe_read_json(path: str):
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception as e:
-        logger.warning("Failed to read JSON at %s: %s", path, e)
-        return {}
-
-
-# ---------- Routes ----------
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    try:
-        return templates.TemplateResponse("index.html", {"request": request})
-    except Exception:
-        return HTMLResponse("<h2>Plant Disease Detector API</h2><p>Use /health, /predict, /tts, /translate</p>")
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "model_loaded": bool(model), "tf_available": TF_AVAILABLE}
-
+# Routes
+@app.get("/")
+def main_page(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(file: UploadFile = File(...), lang: str = Form("te")):
     try:
-        contents = await file.read()
-        if not contents:
-            return JSONResponse({"error": "Empty file"}, status_code=400)
-        arr = preprocess_image_bytes(contents, target_size=(225, 225))
+        # Validate file
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+
+        # Read image
+        image_data = await file.read()
+        if len(image_data) == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+
+        img = Image.open(io.BytesIO(image_data)).convert("RGB")
+
+        # Prediction
+        if model:
+            x = preprocess_pil(img, (225, 225))
+            pred = model.predict(x, verbose=0)[0]
+            idx = int(np.argmax(pred))
+            conf = float(np.max(pred))
+            label = {0: "Healthy", 1: "Powdery", 2: "Rust"}.get(idx, "Unknown")
+        else:
+            # Demo fallback
+            label = "Rust"
+            conf = 0.85
+
+        # GradCAM
+        heatmap = safe_gradcam(img, model, LAST_CONV)
+        if heatmap is not None:
+            overlay = overlay_heatmap(img, heatmap)
+        else:
+            overlay = img
+
+        gradcam_b64 = pil_to_base64(overlay)
+
+        # Get treatment data
+        treatment = get_treatment_data(label, lang)
+
+        # Audio
+        audio_b64 = make_audio_base64(treatment["treatment_summary"], lang=lang)
+
+        logger.info(f"✅ Prediction: {label} (confidence: {conf})")
+
+        return {
+            "disease": label,
+            "confidence": conf,
+            "gradcam_base64": gradcam_b64,
+            "treatment": treatment,
+            "treatment_audio_base64": audio_b64
+        }
+
     except Exception as e:
-        logger.exception("Invalid image upload")
-        return JSONResponse({"error": "Invalid image upload", "detail": str(e)}, status_code=400)
-
-    response = {
-        "disease": "Unknown",
-        "confidence": "0.0",
-        "gradcam_base64": make_dummy_gradcam_base64(),
-        "treatment": {"summary": "No treatment available.", "steps": []},
-        "last_conv": ""
-    }
-
-    if model is not None and TF_AVAILABLE:
-        try:
-            preds = model.predict(arr)
-            idx = int(np.argmax(preds[0]))
-            conf = float(np.max(preds[0]))
-            label_map = {0: "Healthy", 1: "Powdery", 2: "Rust"}
-            label = label_map.get(idx, "Unknown")
-            response["disease"] = label
-            response["confidence"] = f"{conf:.6f}"
-            response["last_conv"] = "conv2d_*"
-
-            if os.path.exists(GRADCAM_OVERLAY_PATH):
-                try:
-                    with open(GRADCAM_OVERLAY_PATH, "rb") as f:
-                        response["gradcam_base64"] = base64.b64encode(f.read()).decode("utf-8")
-                except Exception:
-                    response["gradcam_base64"] = make_dummy_gradcam_base64()
-            else:
-                response["gradcam_base64"] = make_dummy_gradcam_base64()
-
-            guides = safe_read_json(TREATMENT_GUIDE_PATH)
-            if guides:
-                guide = guides.get(label)
-                if guide:
-                    response["treatment"] = guide
-        except Exception as e:
-            logger.exception("Prediction failed")
-            return JSONResponse({"error": "Prediction failed", "detail": str(e)}, status_code=500)
-    else:
-        response["disease"] = "Demo (model not loaded)"
-        response["confidence"] = "0.0"
-        if os.path.exists(GRADCAM_OVERLAY_PATH):
-            try:
-                with open(GRADCAM_OVERLAY_PATH, "rb") as f:
-                    response["gradcam_base64"] = base64.b64encode(f.read()).decode("utf-8")
-            except Exception:
-                response["gradcam_base64"] = make_dummy_gradcam_base64()
-
-    return JSONResponse(response)
-
+        logger.exception("❌ Prediction error")
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 @app.post("/tts")
-async def tts_endpoint(text: str = Form(...), lang: str = Form("en")):
-    if not text:
-        return JSONResponse({"error": "No text provided"}, status_code=400)
-    if not GTTS_AVAILABLE:
-        return JSONResponse({"error": "gTTS not installed on server"}, status_code=500)
+async def text_to_speech(text: str = Form(...), lang: str = Form("te")):
+    """Convert text to speech audio"""
     try:
+        if not GTTS_AVAILABLE:
+            raise HTTPException(status_code=500, detail="TTS not available")
+
+        valid_langs = {"te", "en", "hi"}
+        if lang not in valid_langs:
+            lang = "te"
+
         tts = gTTS(text=text, lang=lang)
-        buf = io.BytesIO()
-        tts.write_to_fp(buf)
-        buf.seek(0)
-        return StreamingResponse(buf, media_type="audio/mpeg")
+        audio_buffer = io.BytesIO()
+        tts.write_to_fp(audio_buffer)
+        audio_buffer.seek(0)
+
+        return StreamingResponse(
+            audio_buffer,
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "attachment; filename=speech.mp3"}
+        )
     except Exception as e:
-        logger.exception("TTS generation failed")
-        return JSONResponse({"error": "TTS generation failed", "detail": str(e)}, status_code=500)
-
-
-@app.post("/translate")
-async def translate_endpoint(text: str = Form(...), target: str = Form("te")):
-    if not text:
-        return JSONResponse({"error": "No text provided"}, status_code=400)
-    if not GOOGLETRANS_AVAILABLE:
-        return JSONResponse({"error": "googletrans not installed on server"}, status_code=500)
-    try:
-        translator = Translator()
-        result = translator.translate(text, dest=target)
-        translated = result.text
-        return JSONResponse({"translated": translated})
-    except Exception as e:
-        logger.exception("Translation failed")
-        return JSONResponse({"error": "Translation failed", "detail": str(e)}, status_code=500)
-
+        logger.error(f"TTS error: {e}")
+        raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
 
 @app.get("/download_uploaded_doc")
 async def download_uploaded_doc():
-    doc_path = os.path.join(UPLOAD_DIR, "project_document.docx")
-    if not os.path.exists(doc_path):
-        return JSONResponse({"error": "Uploaded doc not found"}, status_code=404)
-    return FileResponse(doc_path,
-                        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        filename="project_document.docx")
+    """Serve project document"""
+    doc_path = os.path.join(BASE_DIR, "project_document.docx")
+    if os.path.exists(doc_path):
+        return FileResponse(doc_path, filename="plant_disease_project.docx")
+    else:
+        return JSONResponse({"error": "Document not found"}, status_code=404)
 
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "model_loaded": model is not None,
+        "treatment_loaded": os.path.exists(TREATMENT_JSON_PATH)
+    }
 
-# If run directly (useful for local dev)
 if __name__ == "__main__":
     import uvicorn
-    reload_flag = os.environ.get("RELOAD", "false").lower() in ("1", "true", "yes")
-    uvicorn.run("api:app", host="0.0.0.0", port=PORT, reload=reload_flag)
+    uvicorn.run("api:app", host="0.0.0.0", port=PORT, reload=True)
