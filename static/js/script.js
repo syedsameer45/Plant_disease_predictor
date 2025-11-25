@@ -1,351 +1,360 @@
-// ================================================
-// ADVANCED UI + FIXED VOICE SYSTEM
-// ================================================
+// static/js/script.js - FIXED VERSION
 
-// DOM refs
-const imageInput = document.getElementById('imageInput');
-const previewImg = document.getElementById('previewImg');
-const fileNameEl = document.getElementById('fileName');
-const fileSizeEl = document.getElementById('fileSize');
-const fileResEl = document.getElementById('fileRes');
-const predictBtn = document.getElementById('predictBtn');
-const spinner = document.getElementById('spinner');
-
-const resultCard = document.getElementById('resultCard');
-const diseaseTitle = document.getElementById('diseaseTitle');
-const confidenceEl = document.getElementById('confidence');
-const treatmentSummary = document.getElementById('treatmentSummary');
-const treatmentSteps = document.getElementById('treatmentSteps');
-const heatmapImg = document.getElementById('heatmapImg');
-const lastConvEl = document.getElementById('lastConv');
-const downloadOverlay = document.getElementById('downloadOverlay');
-const historyList = document.getElementById('historyList');
-const saveToHistoryBtn = document.getElementById('saveToHistoryBtn');
-const clearHistoryBtn = document.getElementById('clearHistoryBtn');
-
-const speakBtn = document.getElementById('speakBtn');
-const voiceSelect = document.getElementById('voiceSelect');
-const voiceToggle = document.getElementById('voiceToggle');
-
-let currentUpload = null;
-let lastOverlayBase64 = null;
-let lastResult = null;
-
-const LS_KEY = "plant_ai_history_v1";
-const VOICE_PREF_KEY = "voice_enabled";
-
-// ======================================================
-// IMAGE UPLOAD + PREVIEW
-// ======================================================
-
-const fileDrop = document.getElementById("fileDrop");
-["dragenter", "dragover"].forEach(ev =>
-  fileDrop.addEventListener(ev, e => {
-    e.preventDefault();
-    fileDrop.classList.add("drag");
-  })
-);
-
-["dragleave", "drop"].forEach(ev =>
-  fileDrop.addEventListener(ev, e => {
-    e.preventDefault();
-    fileDrop.classList.remove("drag");
-  })
-);
-
-fileDrop.addEventListener("drop", e => {
-  const f = e.dataTransfer.files[0];
-  if (f) setFile(f);
-});
-
-imageInput.addEventListener("change", e => {
-  const f = e.target.files[0];
-  if (f) setFile(f);
-});
-
-function setFile(file) {
-  currentUpload = file;
-  fileNameEl.textContent = file.name;
-  fileSizeEl.textContent = (file.size / 1024).toFixed(1) + " KB";
-
-  const reader = new FileReader();
-  reader.onload = () => (previewImg.src = reader.result);
-  reader.readAsDataURL(file);
-
-  getImageResolution(file)
-    .then(res => {
-      fileResEl.textContent = res.width + "x" + res.height;
-    })
-    .catch(() => (fileResEl.textContent = "—"));
-
-  predictBtn.disabled = false;
-}
-
-function getImageResolution(file) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () =>
-      resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = reject;
-    img.src = URL.createObjectURL(file);
-  });
-}
-
-// ======================================================
-// RUN PREDICTION
-// ======================================================
-
-predictBtn.addEventListener("click", async () => {
-  if (!currentUpload) return alert("Choose an image first.");
-
-  predictBtn.disabled = true;
-  spinner.classList.remove("hidden");
-
-  try {
-    const form = new FormData();
-    form.append("file", currentUpload);
-
-    const res = await fetch("/predict", {
-      method: "POST",
-      body: form
-    });
-
-    if (!res.ok) {
-      alert("Prediction failed.");
-      return;
+class PlantDiseaseDetector {
+    constructor() {
+        this.currentFile = null;
+        this.lastResponse = null;
+        this.currentLanguage = 'te';
+        this.initializeApp();
     }
 
-    const data = await res.json();
-    showResult(data);
+    initializeApp() {
+        this.bindEvents();
+        this.loadHistory();
+        console.log('🌿 Plant Disease Detector Initialized');
+    }
 
-    lastResult = data;
-    lastOverlayBase64 = data.gradcam_base64;
+    bindEvents() {
+        // File upload events
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const analyzeBtn = document.getElementById('analyzeBtn');
 
-    addToHistory({
-      ts: Date.now(),
-      name: currentUpload.name,
-      disease: data.disease,
-      confidence: data.confidence
-    });
-  } catch (err) {
-    console.error(err);
-    alert("Prediction error: " + err.message);
-  }
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', this.handleDragOver.bind(this));
+        uploadArea.addEventListener('dragleave', this.handleDragLeave.bind(this));
+        uploadArea.addEventListener('drop', this.handleFileDrop.bind(this));
+        
+        fileInput.addEventListener('change', this.handleFileSelect.bind(this));
+        analyzeBtn.addEventListener('click', this.analyzeImage.bind(this));
 
-  spinner.classList.add("hidden");
-  predictBtn.disabled = false;
-});
+        // Language tabs
+        document.querySelectorAll('.language-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => this.switchLanguage(e.target.dataset.lang));
+        });
 
-function showResult(data) {
-  resultCard.classList.remove("hidden");
-  diseaseTitle.textContent = data.disease;
-  confidenceEl.textContent = data.confidence;
+        // Action buttons
+        document.getElementById('speakBtn').addEventListener('click', this.speakTreatment.bind(this));
+        document.getElementById('saveBtn').addEventListener('click', this.saveToHistory.bind(this));
+        document.getElementById('downloadBtn').addEventListener('click', this.downloadHeatmap.bind(this));
+    }
 
-  treatmentSummary.textContent = data.treatment.summary || "";
-  treatmentSteps.innerHTML = "";
-  (data.treatment.steps || []).forEach(s => {
-    const li = document.createElement("li");
-    li.textContent = s;
-    treatmentSteps.appendChild(li);
-  });
+    handleDragOver(e) {
+        e.preventDefault();
+        document.getElementById('uploadArea').classList.add('dragover');
+    }
 
-  heatmapImg.src = "data:image/jpeg;base64," + data.gradcam_base64;
-  lastConvEl.textContent = data.last_conv || "-";
+    handleDragLeave(e) {
+        e.preventDefault();
+        document.getElementById('uploadArea').classList.remove('dragover');
+    }
 
-  downloadOverlay.href = "data:image/jpeg;base64," + data.gradcam_base64;
-  downloadOverlay.download = "gradcam.jpg";
+    handleFileDrop(e) {
+        e.preventDefault();
+        document.getElementById('uploadArea').classList.remove('dragover');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            this.processFile(files[0]);
+        }
+    }
+
+    handleFileSelect(e) {
+        if (e.target.files.length > 0) {
+            this.processFile(e.target.files[0]);
+        }
+    }
+
+    processFile(file) {
+        if (!file.type.startsWith('image/')) {
+            alert('❌ Please select an image file (JPEG, PNG, etc.)');
+            return;
+        }
+
+        this.currentFile = file;
+        
+        // Update file info
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('fileSize').textContent = this.formatFileSize(file.size);
+        document.getElementById('fileType').textContent = file.type;
+        document.getElementById('fileInfo').style.display = 'block';
+
+        // Enable analyze button
+        document.getElementById('analyzeBtn').disabled = false;
+
+        // Show preview
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            document.getElementById('previewImage').src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+
+        console.log('✅ File selected:', file.name);
+    }
+
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    async analyzeImage() {
+        if (!this.currentFile) {
+            alert('❌ Please select an image first.');
+            return;
+        }
+
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const loadingText = document.getElementById('loadingText');
+
+        analyzeBtn.disabled = true;
+        analyzeBtn.textContent = '⏳ Analyzing...';
+        loadingText.style.display = 'block';
+
+        try {
+            const formData = new FormData();
+            formData.append('file', this.currentFile);
+            formData.append('lang', this.currentLanguage);
+
+            const response = await fetch('/predict', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            const data = await response.json();
+            this.lastResponse = data;
+            this.displayResults(data);
+            
+            console.log('✅ Analysis completed:', data);
+
+        } catch (error) {
+            console.error('❌ Analysis failed:', error);
+            alert('Analysis failed: ' + error.message);
+        } finally {
+            analyzeBtn.disabled = false;
+            analyzeBtn.textContent = '🔍 Analyze Image';
+            loadingText.style.display = 'none';
+        }
+    }
+
+    displayResults(data) {
+        // Show result section
+        document.getElementById('resultSection').classList.add('active');
+
+        // Basic info
+        document.getElementById('diseaseTitle').textContent = data.disease || 'Unknown';
+        document.getElementById('confidenceScore').textContent = 
+            typeof data.confidence === 'number' ? (data.confidence * 100).toFixed(1) + '%' : 'N/A';
+
+        // Treatment data
+        const treatment = data.treatment || {};
+        
+        // Summary
+        document.getElementById('treatmentSummary').textContent = 
+            treatment.treatment_summary || 'No treatment information available.';
+
+        // Steps
+        const stepsList = document.getElementById('treatmentSteps');
+        stepsList.innerHTML = '';
+        const steps = treatment.step_by_step || [];
+        if (steps.length > 0) {
+            steps.forEach(step => {
+                const li = document.createElement('li');
+                li.textContent = step;
+                stepsList.appendChild(li);
+            });
+        } else {
+            const li = document.createElement('li');
+            li.textContent = 'No specific steps available.';
+            stepsList.appendChild(li);
+        }
+
+        // Pesticides
+        const pesticideTable = document.querySelector('#pesticideTable tbody');
+        pesticideTable.innerHTML = '';
+        const pesticides = treatment.pesticides || [];
+        
+        if (pesticides.length > 0) {
+            pesticides.forEach(pesticide => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${pesticide.name || 'Unknown'}</td>
+                    <td>${pesticide.dosage || '-'}</td>
+                    <td>${pesticide.frequency || '-'}</td>
+                    <td>${pesticide.notes || '-'}</td>
+                `;
+                pesticideTable.appendChild(row);
+            });
+        } else {
+            const row = document.createElement('tr');
+            row.innerHTML = `<td colspan="4" style="text-align: center; color: #666;">No pesticide recommendations available</td>`;
+            pesticideTable.appendChild(row);
+        }
+
+        // Translations
+        const translations = treatment.translations || {};
+        document.getElementById('transTe').textContent = translations.te || '-';
+        document.getElementById('transEn').textContent = translations.en || '-';
+        document.getElementById('transHi').textContent = translations.hi || '-';
+
+        // Heatmap
+        if (data.gradcam_base64) {
+            document.getElementById('heatmapImage').src = 
+                `data:image/jpeg;base64,${data.gradcam_base64}`;
+        }
+
+        // Scroll to results
+        document.getElementById('resultSection').scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'start' 
+        });
+    }
+
+    switchLanguage(lang) {
+        this.currentLanguage = lang;
+        
+        // Update active tab
+        document.querySelectorAll('.language-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.lang === lang);
+        });
+
+        console.log('🌐 Language switched to:', lang);
+
+        // Re-analyze if we have a current file
+        if (this.currentFile && this.lastResponse) {
+            this.analyzeImage();
+        }
+    }
+
+    async speakTreatment() {
+        if (!this.lastResponse) {
+            alert('❌ Please analyze an image first.');
+            return;
+        }
+
+        const treatment = this.lastResponse.treatment || {};
+        const text = treatment.treatment_summary || 'No treatment information available.';
+
+        try {
+            const response = await fetch('/tts', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    text: text,
+                    lang: this.currentLanguage
+                })
+            });
+
+            if (response.ok) {
+                const audio = new Audio();
+                audio.src = URL.createObjectURL(await response.blob());
+                audio.play();
+            }
+        } catch (error) {
+            console.error('❌ TTS failed:', error);
+            alert('Text-to-speech failed. Please try again.');
+        }
+    }
+
+    saveToHistory() {
+        if (!this.lastResponse || !this.currentFile) {
+            alert('❌ Please analyze an image first.');
+            return;
+        }
+
+        const history = this.loadHistory();
+        history.unshift({
+            timestamp: new Date().toISOString(),
+            fileName: this.currentFile.name,
+            disease: this.lastResponse.disease,
+            confidence: this.lastResponse.confidence
+        });
+
+        // Keep only last 10 items
+        if (history.length > 10) {
+            history.splice(10);
+        }
+
+        localStorage.setItem('plantAnalysisHistory', JSON.stringify(history));
+        this.displayHistory();
+        
+        alert('✅ Analysis saved to history!');
+    }
+
+    loadHistory() {
+        try {
+            return JSON.parse(localStorage.getItem('plantAnalysisHistory') || '[]');
+        } catch {
+            return [];
+        }
+    }
+
+    displayHistory() {
+        const history = this.loadHistory();
+        const historyList = document.getElementById('historyList');
+
+        if (history.length === 0) {
+            historyList.innerHTML = `
+                <p style="color: #666; text-align: center; padding: 20px;">
+                    No analysis history yet. Analyze some images to see them here.
+                </p>
+            `;
+            return;
+        }
+
+        historyList.innerHTML = history.map(item => `
+            <div class="history-item">
+                <div>
+                    <strong>${item.fileName}</strong>
+                    <div style="color: #666; font-size: 0.9rem;">
+                        ${item.disease} • ${(item.confidence * 100).toFixed(1)}% • 
+                        ${new Date(item.timestamp).toLocaleDateString()}
+                    </div>
+                </div>
+                <button class="action-btn" onclick="app.viewHistoryItem('${item.timestamp}')" 
+                        style="padding: 5px 10px; font-size: 0.8rem;">
+                    View
+                </button>
+            </div>
+        `).join('');
+    }
+
+    viewHistoryItem(timestamp) {
+        const history = this.loadHistory();
+        const item = history.find(h => h.timestamp === timestamp);
+        
+        if (item) {
+            // Simulate displaying historical result
+            document.getElementById('diseaseTitle').textContent = item.disease;
+            document.getElementById('confidenceScore').textContent = (item.confidence * 100).toFixed(1) + '%';
+            document.getElementById('resultSection').classList.add('active');
+            document.getElementById('resultSection').scrollIntoView({ behavior: 'smooth' });
+        }
+    }
+
+    downloadHeatmap() {
+        if (!this.lastResponse || !this.lastResponse.gradcam_base64) {
+            alert('❌ No heatmap available to download.');
+            return;
+        }
+
+        const link = document.createElement('a');
+        link.href = `data:image/jpeg;base64,${this.lastResponse.gradcam_base64}`;
+        link.download = `${this.lastResponse.disease || 'plant'}_heatmap.jpg`;
+        link.click();
+    }
 }
 
-// ======================================================
-// =========== FIXED VOICE SYSTEM =======================
-// ======================================================
+// Initialize the application
+const app = new PlantDiseaseDetector();
 
-// Load saved preference
-voiceToggle.checked =
-  localStorage.getItem(VOICE_PREF_KEY) === "1" || localStorage.getItem(VOICE_PREF_KEY) === null;
-
-voiceToggle.addEventListener("change", () => {
-  localStorage.setItem(VOICE_PREF_KEY, voiceToggle.checked ? "1" : "0");
-});
-
-// STOP all audio
-function stopAllAudio() {
-  try {
-    window.speechSynthesis.cancel();
-  } catch {}
-
-  if (window.currentAudioObj) {
-    window.currentAudioObj.pause();
-    window.currentAudioObj.src = "";
-    window.currentAudioObj = null;
-  }
-}
-
-// Build text for speaking
-function buildSpeechText(data) {
-  let parts = [];
-
-  parts.push(`Disease detected: ${data.disease}.`);
-  parts.push(`Confidence: ${(parseFloat(data.confidence) * 100).toFixed(1)} percent.`);
-
-  if (data.treatment.summary)
-    parts.push(`Summary: ${data.treatment.summary}.`);
-
-  if (data.treatment.steps) {
-    parts.push("Recommended steps:");
-    data.treatment.steps.forEach((s, idx) => {
-      parts.push(`Step ${idx + 1}: ${s}.`);
-    });
-  }
-
-  return parts.join(" ");
-}
-
-// Translate API
-async function translateText(text, lang) {
-  try {
-    const params = new URLSearchParams();
-    params.append("text", text);
-    params.append("target", lang);
-
-    const res = await fetch("/translate", {
-      method: "POST",
-      body: params,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" }
-    });
-
-    const js = await res.json();
-    return js.translated || text;
-  } catch {
-    return text;
-  }
-}
-
-// Server TTS
-async function serverSpeak(text, lang) {
-  stopAllAudio();
-
-  const params = new URLSearchParams();
-  params.append("text", text);
-  params.append("lang", lang);
-
-  const res = await fetch("/tts", {
-    method: "POST",
-    body: params,
-    headers: { "Content-Type": "application/x-www-form-urlencoded" }
-  });
-
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-
-  const audio = new Audio(url);
-  window.currentAudioObj = audio;
-  audio.play();
-}
-
-// Client-side TTS for English only
-function clientSpeak(text, lang) {
-  stopAllAudio();
-
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = lang;
-  utter.rate = 0.95;
-
-  window.speechSynthesis.speak(utter);
-}
-
-// MASTER SPEAK FUNCTION (fixed)
-async function speakResult(result) {
-  if (!result) return;
-
-  // FIX ✔ Completely turn off voice
-  if (!voiceToggle.checked) {
-    stopAllAudio();
-    return;
-  }
-
-  stopAllAudio(); // FIX double audio
-
-  const lang = voiceSelect.value;
-  const englishText = buildSpeechText(result);
-
-  // Telugu or Hindi → server TTS ONLY
-  if (lang === "te" || lang === "hi") {
-    const translated = await translateText(englishText, lang);
-    return serverSpeak(translated, lang);
-  }
-
-  // English → browser TTS
-  clientSpeak(englishText, lang);
-}
-
-speakBtn.addEventListener("click", () => {
-  if (!lastResult) return alert("Analyze an image first.");
-  speakResult(lastResult);
-});
-
-// ======================================================
-// HISTORY (No Base64 Saved)
-// ======================================================
-
-function loadHistory() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY)) || [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(list) {
-  localStorage.setItem(LS_KEY, JSON.stringify(list));
-}
-
-function addToHistory(entry) {
-  const list = loadHistory();
-  list.unshift(entry);
-  if (list.length > 12) list.pop();
-  saveHistory(list);
-  renderHistory();
-}
-
-function renderHistory() {
-  const list = loadHistory();
-  historyList.innerHTML = "";
-
-  if (!list.length) {
-    historyList.innerHTML = "<div class='muted small'>No history yet</div>";
-    return;
-  }
-
-  list.forEach(item => {
-    const div = document.createElement("div");
-    div.className = "history-item";
-
-    div.innerHTML = `
-      <div>
-        <strong>${item.name}</strong>
-        <div class="meta">${item.disease} • ${item.confidence}</div>
-      </div>
-      <div>
-        <button class="btn small">View</button>
-      </div>
-    `;
-
-    div.querySelector("button").onclick = () => {
-      diseaseTitle.textContent = item.disease;
-      confidenceEl.textContent = item.confidence;
-      resultCard.classList.remove("hidden");
-    };
-
-    historyList.appendChild(div);
-  });
-}
-
-clearHistoryBtn.addEventListener("click", () => {
-  if (confirm("Clear history?")) {
-    localStorage.removeItem(LS_KEY);
-    renderHistory();
-  }
-});
-
-renderHistory();
+// Make app globally available for history buttons
+window.app = app;
